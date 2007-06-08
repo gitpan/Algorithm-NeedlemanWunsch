@@ -3,3 +3,5 @@ Revision history for Algorithm-NeedlemanWunsch
 0.01    Thu May 31 16:55:29 UTC 2007
         First version.
 
+0.02	Fri Jun  8 17:35:02 UTC 2007
+	Local alignment, affine block gap penalties.

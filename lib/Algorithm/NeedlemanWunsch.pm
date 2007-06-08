@@ -4,17 +4,95 @@ use warnings;
 use strict;
 
 use List::Util qw(max);
+use Carp;
+
+my $from_diag = 1;
+my $from_up = 2;
+my $from_left = 4;
+
+sub _curry_callback {
+    my ($univ_cb, $spec_name) = @_;
+
+    my $cb;
+    if ($spec_name eq 'align') {
+        $cb = sub {
+	    my $arg = { align => [ @_ ] };
+	    my $rv = &$univ_cb($arg);
+	    croak "select_align callback returned invalid selection $rv."
+	        unless $rv eq 'align';
+	};
+    } else {
+        $cb = sub {
+	    my $arg = { $spec_name => $_[0] };
+	    my $rv = &$univ_cb($arg);
+	    croak "select_align callback returned invalid selection $rv."
+	        unless $rv eq $spec_name;
+	};
+    }
+
+    return $cb;
+}
+
+sub _canonicalize_callbacks {
+    my $cb;
+    if (@_) {
+        $cb = $_[0];
+    } else {
+        $cb = { };
+    }
+
+    if (exists($cb->{select_align})) {
+        my @cn = qw(align shift_a shift_b);
+	foreach (@cn) {
+	    if (!exists($cb->{$_})) {
+	        $cb->{$_} = _curry_callback($cb->{select_align}, $_);
+	    }
+	}
+    }
+
+    return $cb;
+}
 
 sub new {
     my $class = shift;
     my $score_sub = shift;
 
-    my $self = { score_sub => $score_sub };
+    my $self = { score_sub => $score_sub, local => 0 };
     if (@_) {
         $self->{gap_penalty} = $_[0];
     }
 
     return bless $self, $class;
+}
+
+sub local {
+    my $self = shift;
+
+    if (@_) {
+        $self->{local} = $_[0];
+    }
+
+    return $self->{local};
+}
+
+sub gap_open_penalty {
+    my $self = shift;
+
+    if (@_) {
+        $self->{gap_open_penalty} = $_[0];
+    }
+
+    return $self->{gap_open_penalty};
+}
+
+sub gap_extend_penalty {
+    my $self = shift;
+
+    if (@_) {
+        $self->{gap_extend_penalty} = $_[0];
+    }
+
+    return $self->{gap_extend_penalty};
 }
 
 sub align {
@@ -23,28 +101,27 @@ sub align {
     my $a = shift;
     my $b = shift;
 
-    my $cb;
-    if (@_) {
-        $cb = $_[0];
+    $self->{callbacks} = _canonicalize_callbacks(@_);
+
+    if (!exists($self->{gap_open_penalty})) {
+	if (exists($self->{gap_extend_penalty})) {
+	    croak "gap_open_penalty must be defined together with gap_extend_penalty";
+	}
+
+        if (!exists($self->{gap_penalty})) {
+	    $self->{gap_penalty} = &{$self->{score_sub}}();
+	}
     } else {
-        $cb = { };
-    }
+	if (!exists($self->{gap_extend_penalty})) {
+	    croak "gap_extend_penalty must be defined together with gap_open_penalty";
+	}
 
-    if (!exists($self->{gap_penalty})) {
-        $self->{gap_penalty} = &{$self->{score_sub}}();
-    }
-
-    if (exists($cb->{select_align})) {
-        my @cn = qw(align shift_a shift_b);
-	foreach (@cn) {
-	    if (!exists($cb->{$_})) {
-	        $cb->{$_} = $self->_synth_cb($cb->{select_align}, $_);
-	    }
+	if ($self->{gap_open_penalty} >= $self->{gap_extend_penalty}) {
+	    croak "gap_open_penalty must be smaller than gap_extend_penalty";
 	}
     }
 
-    $self->{callbacks} = $cb;
-
+    my $A = [ [ 0 ] ];
     my $D = [ [ 0 ] ];
     my $m = scalar(@$b);
     my $n = scalar(@$a);
@@ -56,38 +133,141 @@ sub align {
 	    &{$self->{score_sub}}($a->[$j - 1], $b->[$i - 1]);
     };
 
-    my $score_up = sub {
-        my ($i, $j) = @_;
+    my $score_up;
+    if (!exists($self->{gap_open_penalty})) {
+        $score_up = sub {
+	    my ($i, $j) = @_;
 
-	$D->[$i - 1]->[$j] + $self->{gap_penalty};
-    };
+	    $D->[$i - 1]->[$j] + $self->{gap_penalty};
+	};
+    } else {
+        $score_up = sub {
+	    my ($i, $j) = @_;
 
-    my $score_left = sub {
-        my ($i, $j) = @_;
+	    my $gp = (($A->[$i - 1]->[$j]) & $from_up) ?
+               $self->{gap_extend_penalty} :
+	       $self->{gap_open_penalty};
+	    $D->[$i - 1]->[$j] + $gp;
+	};
+    }
 
-	$D->[$i]->[$j - 1] + $self->{gap_penalty};
-    };
+    my $score_left;
+    if (!exists($self->{gap_open_penalty})) {
+	if (!$self->{local}) {
+	    $score_left = sub {
+		my ($i, $j) = @_;
 
+		$D->[$i]->[$j - 1] + $self->{gap_penalty};
+	    };
+	} else {
+	    $score_left = sub {
+		my ($i, $j) = @_;
+
+		($i < $m) ?
+		    $D->[$i]->[$j - 1] + $self->{gap_penalty} :
+		    $D->[$i]->[$j - 1];
+	    };
+	}
+    } else {
+	if (!$self->{local}) {
+	    $score_left = sub {
+		my ($i, $j) = @_;
+
+		my $gp = (($A->[$i]->[$j - 1]) & $from_left) ?
+		    $self->{gap_extend_penalty} :
+		    $self->{gap_open_penalty};
+		$D->[$i]->[$j - 1] + $gp;
+	    };
+	} else {
+	    $score_left = sub {
+		my ($i, $j) = @_;
+
+		my $gp = 0;
+		if ($i < $m) {
+		    $gp = (($A->[$i]->[$j - 1]) & $from_left) ?
+		        $self->{gap_extend_penalty} :
+			$self->{gap_open_penalty};
+		}
+
+		$D->[$i]->[$j - 1] + $gp;
+	    };
+	}
+    }
+
+    # order must correspond to $from_* constants
     my @subproblems = ( $score_diag, $score_up, $score_left );
 
     my $j = 1;
     while ($j <= $n) {
-        $D->[0]->[$j] = $j * $self->{gap_penalty};
+        $A->[0]->[$j] = $from_left;
 	++$j;
+    }
+
+    if (!$self->{local}) {
+        if (!exists($self->{gap_open_penalty})) {
+	    $j = 1;
+	    while ($j <= $n) {
+		$D->[0]->[$j] = $j * $self->{gap_penalty};
+		++$j;
+	    }
+	} else {
+	    $j = 1;
+	    while ($j <= $n) {
+		$D->[0]->[$j] = $self->{gap_open_penalty} +
+		    ($j - 1) * $self->{gap_extend_penalty};
+		++$j;
+	    }
+	}
+    } else {
+        $j = 1;
+	while ($j <= $n) {
+	    $D->[0]->[$j] = 0;
+	    ++$j;
+        }
     }
 
     my $i = 1;
     while ($i <= $m) {
-        $D->[$i]->[0] = $i * $self->{gap_penalty};
+        $A->[$i]->[0] = $from_up;
 	++$i;
+    }
+
+    if (!exists($self->{gap_open_penalty})) {
+	my $i = 1;
+	while ($i <= $m) {
+	    $D->[$i]->[0] = $i * $self->{gap_penalty};
+	    ++$i;
+	}
+    } else {
+	my $i = 1;
+	while ($i <= $m) {
+	    $D->[$i]->[0] = $self->{gap_open_penalty} +
+	        ($i - 1) * $self->{gap_extend_penalty};
+	    ++$i;
+	}
     }
 
     $i = 1;
     while ($i <= $m) {
-        $j = 1;
+        my $j = 1;
 	while ($j <= $n) {
 	    my @scores = map { &$_($i, $j); } @subproblems;
-	    $D->[$i]->[$j] = max(@scores);
+	    my $d = max(@scores);
+
+	    my $a = 0;
+	    my $from = 1;
+	    my $k = 0;
+	    while ($k < scalar(@scores)) {
+		if ($scores[$k] == $d) {
+		  $a |= $from;
+		}
+
+		$from *= 2;
+		++$k;
+	    }
+
+	    $A->[$i]->[$j] = $a;
+	    $D->[$i]->[$j] = $d;
 
 	    # my $x = join ', ', @scores;
 	    # warn "$i, $j: $x -> ", $D->[$i]->[$j], "\n";
@@ -100,33 +280,34 @@ sub align {
     $i = $m;
     $j = $n;
     while (($i > 0) || ($j > 0)) {
+        my $a = $A->[$i]->[$j];
 	my @alt;
-	if (($i > 0) && ($j > 0)) {
-	    push @alt, [ &$score_diag($i, $j), $i - 1, $j - 1];
+	if ($a & $from_diag) {
+	    die "internal error" unless ($i > 0) && ($j > 0);
+	    push @alt, [ $i - 1, $j - 1 ];
 	}
 
-	if ($i > 0) {
-	    push @alt, [ &$score_up($i, $j), $i - 1, $j ];
+	if ($a & $from_up) {
+	    die "internal error" unless ($i > 0);
+	    push @alt, [ $i - 1, $j ];
 	}
 
-	if ($j > 0) {
-	    push @alt, [ &$score_left($i, $j), $i, $j - 1];
+	if ($a & $from_left) {
+	    die "internal error" unless ($j > 0);
+	    push @alt, [ $i, $j - 1];
 	}
 
-        my $t = $D->[$i]->[$j];
-        my @opt_alt = grep { $_->[0] == $t; } @alt;
-	if (!@opt_alt) {
+	if (!@alt) {
 	    die "internal error";
 	}
 
-	my @sources = map { [ $_->[1], $_->[2] ]; } @opt_alt;
-
 	my $cur = [ $i, $j ];
 	my $move;
-	if (@sources == 1) {
-	    $move = $self->_simple_trace_back($cur, $sources[0], $cb);
+	if (@alt == 1) {
+	    $move = $self->_simple_trace_back($cur, $alt[0],
+					      $self->{callbacks});
 	} else {
-	    $move = $self->_trace_back($cur, \@sources);
+	    $move = $self->_trace_back($cur, \@alt);
 	}
 
 	if ($move eq 'align') {
@@ -134,8 +315,20 @@ sub align {
 	    --$j;
 	} elsif ($move eq 'shift_a') {
 	    --$j;
+
+	    if (exists($self->{gap_open_penalty})) {
+		if (($A->[$i]->[$j]) & $from_left) {
+		    $A->[$i]->[$j] = $from_left;
+		}
+	    }
 	} elsif ($move eq 'shift_b') {
 	    --$i;
+
+	    if (exists($self->{gap_open_penalty})) {
+		if (($A->[$i]->[$j]) & $from_up) {
+		    $A->[$i]->[$j] = $from_up;
+		}
+	    }
 	} else {
 	    die "internal error";
 	}
@@ -231,44 +424,21 @@ sub _simple_trace_back {
     }
 }
 
-sub _synth_cb {
-    my ($dummy, $univ_cb, $spec_name) = @_;
-
-    my $cb;
-    if ($spec_name eq 'align') {
-        $cb = sub {
-	    my $arg = { align => [ @_ ] };
-	    my $rv = &$univ_cb($arg);
-	    die "select_align callback returned invalid selection $rv."
-	        unless $rv eq 'align';
-	};
-    } else {
-        $cb = sub {
-	    my $arg = { $spec_name => $_[0] };
-	    my $rv = &$univ_cb($arg);
-	    die "select_align callback returned invalid selection $rv."
-	        unless $rv eq $spec_name;
-	};
-    }
-
-    return $cb;
-}
-
 1;
 
 __END__
 
 =head1 NAME
 
-Algorithm::NeedlemanWunsch - global sequence alignment with configurable scoring
+Algorithm::NeedlemanWunsch - sequence alignment with configurable scoring
 
 =head1 VERSION
 
-Version 0.01
+Version 0.02
 
 =cut
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 SYNOPSIS
 
@@ -316,14 +486,18 @@ or
                   | |
   sequence B: t g a t - -
 
-(and exponentially many other ways, of course). Note that we're
-considering I<global> alignments, over the entire length of both
-sequences; each item is either aligned with an item of the other
-sequence, or corresponds to a I<gap> (which is always aligned with an
-item - aligning two gaps wouldn't help anything). This approach is
-especially suitable for comparing sequences of comparable length and
-somewhat similar along their whole lengths (that is, without long
-stretches that have nothing to do with each other).
+(and exponentially many other ways, of course). Note that
+Needleman-Wunsch considers I<global> alignments, over the entire
+length of both sequences; each item is either aligned with an item of
+the other sequence, or corresponds to a I<gap> (which is always
+aligned with an item - aligning two gaps wouldn't help anything). This
+approach is especially suitable for comparing sequences of comparable
+length and somewhat similar along their whole lengths - that is,
+without long stretches that have nothing to do with each other. If
+your sequences don't satisfy these requirements, consider using local
+alignment, which, strictly speaking, isn't Needleman-Wunsch, but is
+similar enough to be implemented in this module as well - see below
+for details.
 
 In the example above, the second alignment has more gaps than the
 first, but perhaps your a's are structurally important and you like
@@ -365,7 +539,9 @@ application to choose between different optimal alignments.
 
 =head1 METHODS
 
-=head2 new(\&score_sub [, $gap_penalty ])
+=head2 Standard algorithm
+
+=head3 new(\&score_sub [, $gap_penalty ])
 
 The constructor. Takes one mandatory argument, which is a coderef to a
 sub implementing the similarity matrix, plus an optional gap penalty
@@ -377,7 +553,7 @@ sequence, respectively, passed to
 C<Algorithm::NeedlemanWunsch::align>. Note that the sub must be pure,
 i.e. always return the same value when called with the same arguments.
 
-=head2 align(\@a, \@b [, \%callbacks ])
+=head3 align(\@a, \@b [, \%callbacks ])
 
 The core of the algorithm. Creates a bottom-up dynamic programming
 matrix, fills it with alignment scores and then traces back to find an
@@ -452,9 +628,66 @@ Note that the passed positions move backwards, from the sequence ends
 to zero - if you're building the alignment in your callbacks, add
 items to the front.
 
+=head2 Extensions
+
+In addition to the standard Needleman-Wunsch algorithm, this module
+also implements two popular extensions: local alignment and affine
+block gap penalties. Use of both extensions is controlled by setting
+the properties of C<Algorithm::NeedlemanWunsch> object described
+below.
+
+=head3 local
+
+When this flag is set before calling
+C<Algorithm::NeedlemanWunsch::align>, the alignment scoring doesn't
+charge the gap penalty for gaps at the beginning (i.e. before the
+first item) and end (after the last item) of the second sequence
+passed to C<align>, so that for example the optimal (with identity
+matrix as similarity matrix and a negative gap penalty) alignment of
+C<a b c d e f g h> and C<b c h> becomes
+
+  sequence A: a b c d e f g h
+                | |
+  sequence B:   b c h
+
+instead of the global
+
+  sequence A: a b c d e f g h
+                | |         |
+  sequence B: - b c - - - - h
+
+Note that local alignment is asymmetrical - when using it, the longer
+sequence should be the first passed to
+C<Algorithm::NeedlemanWunsch::align>.
+
+=head3 gap_open_penalty, gap_extend_penalty
+
+Using the same gap penalty for every gap has the advantage of
+simplicity, but some applications may want a more complicated
+approach. Biologists, for example, looking for gaps longer than one
+DNA sequence base, typically want to distinguish a gap opening
+(costly) from more missing items following it (shouldn't cost so
+much). That requirement can be modelled by charging 2 gap penalties:
+C<gap_open_penalty> for the first gap, and then C<gap_extend_penalty>
+for each consecutive gap on the same sequence.
+
+Note that you must set both these properties if you set any of them
+and that C<gap_open_penalty> must be less than C<gap_extend_penalty>
+(if you know of a use case where the gap opening penalty should be
+preferred to gap extension, let me know). With such penalties set
+before calling C<Algorithm::NeedlemanWunsch::align>, sequences C<A T G
+T A G T G T A T A G T A C A T G C A> and C<A T G T A G T A C A T G C
+A> are aligned
+
+  sequence A: A T G T A G T G T A T A G T A C A T G C A
+              | | |               | | | | | | | | | | |
+  sequence B: A T G - - - - - - - T A G T A C A T G C A
+
+i.e. with all gaps bunched together.
+
 =head1 SEE ALSO
 
-L<Algorithm::Diff>
+L<Algorithm::Diff>, L<Text::WagnerFischer>
 
 =head1 AUTHOR
 
@@ -483,6 +716,8 @@ general method applicable to the search for similarities in the amino
 acid sequence of two proteins", J Mol Biol. 48(3):443-53.
 
 This implementation is based mostly on
-L<http://www.ludwig.edu.au/course/lectures2005/Likic.pdf> .
+L<http://www.ludwig.edu.au/course/lectures2005/Likic.pdf>, local
+alignment is from
+L<http://www.techfak.uni-bielefeld.de/bcd/Curric/PrwAli/node6.html>.
 
 =cut

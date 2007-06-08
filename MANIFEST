@@ -5,7 +5,9 @@ Makefile.PL
 README
 lib/Algorithm/NeedlemanWunsch.pm
 t/00-load.t
+t/affine.t
 t/edge.t
+t/html.t
 t/pod.t
 t/pub.t
 t/simple.t

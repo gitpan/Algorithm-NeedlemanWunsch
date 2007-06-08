@@ -9,6 +9,7 @@ WriteMakefile(
     ABSTRACT_FROM       => 'lib/Algorithm/NeedlemanWunsch.pm',
     PL_FILES            => {},
     PREREQ_PM => {
+	'Carp' => 0,
 	'List::Util' => 0,
         'Test::More' => 0,
     },

@@ -1,8 +1,7 @@
 #!perl -T
 
 use Algorithm::NeedlemanWunsch;
-use Test::More tests => 24;
-use Data::Dumper;
+use Test::More tests => 38;
 
 # sequences & scoring from
 # http://www.ludwig.edu.au/course/lectures2005/Likic.pdf
@@ -61,10 +60,21 @@ my $score = $simple->align(\@a, \@b,
 			    shift_a => \&prepend_first_only,
 			    shift_b => \&prepend_second_only
 			   });
+my $expected = [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ undef, 'A' ],
+	    [ 'G', undef ], [ 'C', undef ], [ 'G', 'G' ], [ 'T', 'T' ] ];
 is($score, 5);
-is_deeply(\@alignment,
-	  [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ undef, 'A' ],
-	    [ 'G', undef ], [ 'C', undef ], [ 'G', 'G' ], [ 'T', 'T' ] ]);
+is_deeply(\@alignment, $expected);
+
+$simple->local(1);
+@alignment = ();
+$score = $simple->align(\@a, \@b,
+			{
+			 align => \&prepend_align,
+			 shift_a => \&prepend_first_only,
+			 shift_b => \&prepend_second_only
+			});
+is($score, 5);
+is_deeply(\@alignment, $expected);
 
 $simple = Algorithm::NeedlemanWunsch->new(\&simple_scheme, -5);
 
@@ -76,9 +86,21 @@ $score = $simple->align(\@a, \@b,
 			    shift_b => \&prepend_second_only
 			   });
 is($score, -1);
-
 is_deeply(\@alignment,
 	  [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', undef ], [ 'G', 'G' ],
+	    [ 'C', 'A' ], [ 'G', 'G' ], [ 'T', 'T' ] ]);
+
+$simple->local(1);
+@alignment = ();
+$score = $simple->align(\@a, \@b,
+			   {
+			    align => \&prepend_align,
+			    shift_a => \&prepend_first_only,
+			    shift_b => \&prepend_second_only
+			   });
+is($score, 0);
+is_deeply(\@alignment,
+	  [ [ 'A', undef ], [ 'T', 'A' ], [ 'G', 'T' ], [ 'G', 'G' ],
 	    [ 'C', 'A' ], [ 'G', 'G' ], [ 'T', 'T' ] ]);
 
 sub postpone_gap {
@@ -96,6 +118,8 @@ sub postpone_gap {
     }
 }
 
+$simple->local(0);
+
 @alignment = ();
 $score = $simple->align(\@a, \@b,
 			   {
@@ -105,10 +129,24 @@ $score = $simple->align(\@a, \@b,
 			    select_align => \&postpone_gap
 			   });
 is($score, -1);
-
 is_deeply(\@alignment,
 	  [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ 'G', 'A' ],
 	    [ 'C', undef ], [ 'G', 'G' ], [ 'T', 'T' ] ]);
+
+$simple->local(1);
+
+@alignment = ();
+$score = $simple->align(\@a, \@b,
+			   {
+			    align => \&prepend_align,
+			    shift_a => \&prepend_first_only,
+			    shift_b => \&prepend_second_only,
+			    select_align => \&postpone_gap
+			   });
+is($score, 0);
+is_deeply(\@alignment,
+	  [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ 'G', 'A' ],
+	    [ 'C', 'G' ], [ 'G', 'T' ], [ 'T', undef ] ]);
 
 my $evo = Algorithm::NeedlemanWunsch->new(\&evo_scheme);
 
@@ -120,10 +158,20 @@ $score = $evo->align(\@a, \@b,
 			    shift_b => \&prepend_second_only
 			   });
 is($score, 11);
-is_deeply(\@alignment,
-	  [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ 'G', 'A' ],
-	    [ 'C', undef ], [ 'G', 'G' ], [ 'T', 'T' ] ]);
+$expected = [ [ 'A', 'A' ], [ 'T', 'T' ], [ 'G', 'G' ], [ 'G', 'A' ],
+	    [ 'C', undef ], [ 'G', 'G' ], [ 'T', 'T' ] ];
+is_deeply(\@alignment, $expected);
 
+$evo->local(1);
+@alignment = ();
+$score = $evo->align(\@a, \@b,
+			   {
+			    align => \&prepend_align,
+			    shift_a => \&prepend_first_only,
+			    shift_b => \&prepend_second_only
+			   });
+is($score, 11);
+is_deeply(\@alignment,, $expected);
 
 # sequences & scoring from
 # http://sedefcho.icnhost.net/web/algorithms/needleman_wunsch.html
@@ -184,6 +232,21 @@ is($score, 16);
 is($oa, '--AGACTAGTTAC');
 is($ob, 'CGAGAC--G-T--');
 
+$evo->local(1);
+$oa = '';
+$ob = '';
+$score = $evo->align(\@a, \@b,
+			   {
+			    align => \&prepend_align2,
+			    shift_a => \&prepend_first_only2,
+			    shift_b => \&prepend_second_only2
+			   });
+is($score, 31);
+is($oa, '--AGACTAGTTAC');
+is($ob, 'CGAGAC--GT---');
+
+$evo->local(0);
+
 sub select_align2 {
     my $arg = shift;
 
@@ -224,6 +287,20 @@ $score = $evo->align(\@a, \@b,
 is($score, 38);
 is($oa, 'TA-GCA--C-AC-AA-C');
 is($ob, '-ACGTACGCGACTAGTC');
+
+$oa = '';
+$ob = '';
+$evo->local(1);
+$score = $evo->align(\@a, \@b,
+			   {
+			    align => \&prepend_align2,
+			    shift_a => \&prepend_first_only2,
+			    shift_b => \&prepend_second_only2
+			   });
+is($score, 43);
+is($oa, 'TA-GCA--C-AC-AA-C');
+is($ob, '-ACGTACGCGACTAGTC');
+$evo->local(0);
 
 $oa = '';
 $ob = '';
