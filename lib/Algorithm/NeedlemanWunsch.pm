@@ -6,6 +6,8 @@ use strict;
 use List::Util qw(max);
 use Carp;
 
+our $VERSION = '0.03';
+
 my $from_diag = 1;
 my $from_up = 2;
 my $from_left = 4;
@@ -437,8 +439,6 @@ Algorithm::NeedlemanWunsch - sequence alignment with configurable scoring
 Version 0.02
 
 =cut
-
-our $VERSION = '0.02';
 
 =head1 SYNOPSIS
 
