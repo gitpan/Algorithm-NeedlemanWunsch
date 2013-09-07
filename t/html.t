@@ -73,15 +73,16 @@ $score = $matcher->align(\@haystack, \@needle,
 			  shift_a => \&prepend_first_only,
 			  shift_b => \&prepend_second_only
 			 });
-is($score, 2);
+is($score, 3);
 is_deeply(\@background,
 	  [ 'div', 'span', 'font', '/font', '/span', 'a', '/a',
 	    'table', 'tr', 'td', 'font', 'span', '/span',
-	    'a', '/a', 'br', 'span', 'a', '/a', '-', '-', '/span',
+	    'a', '/a', 'br', 'span', '-', 'a', '/a', '-', '-', '/span',
 	    'br', 'br', 'span', '/span', 'nobr', '-', '-', 'a', '/a',
 	    '/nobr', '/font', '/td', '/tr', '/table', '/div' ]);
 is_deeply(\@foreground,
 	  [ '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-', '-',
-	    '-', '-', '-', '-', 'div', 'a', '/a', 'table', 'tr', 'td',
-	    'font', 'br', 'span', '/span', 'nobr', 'a', '/a', 'a', '/a',
-	    '/nobr', '/font', '/td', '/tr', '/table', '/div' ]);
+	    '-', '-', '-', '-', '-', 'div', 'a', '/a', 'table', 'tr', 
+	    'td', 'font', 'br', 'span', '/span', 'nobr', 'a', '/a',
+	    'a', '/a', '/nobr', '/font', '/td', '/tr', '/table',
+	    '/div' ]);

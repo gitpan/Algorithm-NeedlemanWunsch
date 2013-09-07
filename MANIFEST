@@ -11,3 +11,4 @@ t/html.t
 t/pod.t
 t/pub.t
 t/simple.t
+META.json                                Module JSON meta-data (added by MakeMaker)

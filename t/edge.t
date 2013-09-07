@@ -103,8 +103,8 @@ $score = $matcher->align(\@a, \@b,
 			  shift_b => \&prepend_second_only
 			 });
 is($score, 3);
-is($oa, '1011000111-----11');
-is($ob, '-01--0011100000--');
+is($oa, '-10--11--00011111');
+is($ob, '010011100000-----');
 
 $oa = '';
 $ob = '';
@@ -116,8 +116,8 @@ $score = $matcher->align(\@a, \@b,
 			  shift_b => \&prepend_second_only
 			 });
 is($score, 3);
-is($oa, '0100111000-----00');
-is($ob, '-10--1100011111--');
+is($oa, '-01--00--11100000');
+is($ob, '101100011111-----');
 
 $oa = '';
 $ob = '';
@@ -129,5 +129,5 @@ $score = $matcher->align(\@a, \@b,
 			  shift_b => \&prepend_second_only
 			 });
 is($score, 5);
-is($oa, '0100111000-----00');
-is($ob, '-10--1100011111--');
+is($oa, '0---100---11100000');
+is($ob, '-101100011111-----');

@@ -1,5 +1,8 @@
 use strict;
 use warnings;
+
+require 5.006_000; # $VERSION declaration apparently fails on 5.00505
+
 use ExtUtils::MakeMaker;
 
 WriteMakefile(

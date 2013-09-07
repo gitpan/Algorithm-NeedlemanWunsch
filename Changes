@@ -8,3 +8,6 @@ Revision history for Algorithm-NeedlemanWunsch
 
 0.03	Tue Mar 18 17:08:26 UTC 2008
 	Fix for http://rt.cpan.org/Public/Bug/Display.html?id=34179 .
+
+0.04	Sat Sep  7 07:31:06 UTC 2013
+	Fixed affine gap penalties.

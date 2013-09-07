@@ -6,11 +6,14 @@ use strict;
 use List::Util qw(max);
 use Carp;
 
-our $VERSION = '0.03';
+our $VERSION = '0.04';
 
 my $from_diag = 1;
 my $from_up = 2;
 my $from_left = 4;
+my $from_diag_idx = 0;
+my $from_up_idx = 1;
+my $from_left_idx = 2;
 
 sub _curry_callback {
     my ($univ_cb, $spec_name) = @_;
@@ -113,6 +116,8 @@ sub align {
         if (!exists($self->{gap_penalty})) {
 	    $self->{gap_penalty} = &{$self->{score_sub}}();
 	}
+
+	return $self->_align_basic($a, $b);
     } else {
 	if (!exists($self->{gap_extend_penalty})) {
 	    croak "gap_extend_penalty must be defined together with gap_open_penalty";
@@ -121,7 +126,15 @@ sub align {
 	if ($self->{gap_open_penalty} >= $self->{gap_extend_penalty}) {
 	    croak "gap_open_penalty must be smaller than gap_extend_penalty";
 	}
+
+	return $self->_align_affine($a, $b);
     }
+}
+
+sub _align_basic {
+    my $self = shift;
+    my $a = shift;
+    my $b = shift;
 
     my $A = [ [ 0 ] ];
     my $D = [ [ 0 ] ];
@@ -135,65 +148,27 @@ sub align {
 	    &{$self->{score_sub}}($a->[$j - 1], $b->[$i - 1]);
     };
 
-    my $score_up;
-    if (!exists($self->{gap_open_penalty})) {
-        $score_up = sub {
-	    my ($i, $j) = @_;
+    my $score_up = sub {
+	my ($i, $j) = @_;
 
-	    $D->[$i - 1]->[$j] + $self->{gap_penalty};
-	};
-    } else {
-        $score_up = sub {
-	    my ($i, $j) = @_;
-
-	    my $gp = (($A->[$i - 1]->[$j]) & $from_up) ?
-               $self->{gap_extend_penalty} :
-	       $self->{gap_open_penalty};
-	    $D->[$i - 1]->[$j] + $gp;
-	};
-    }
+	$D->[$i - 1]->[$j] + $self->{gap_penalty};
+    };
 
     my $score_left;
-    if (!exists($self->{gap_open_penalty})) {
-	if (!$self->{local}) {
-	    $score_left = sub {
-		my ($i, $j) = @_;
+    if (!$self->{local}) {
+	$score_left = sub {
+	    my ($i, $j) = @_;
 
-		$D->[$i]->[$j - 1] + $self->{gap_penalty};
-	    };
-	} else {
-	    $score_left = sub {
-		my ($i, $j) = @_;
-
-		($i < $m) ?
-		    $D->[$i]->[$j - 1] + $self->{gap_penalty} :
-		    $D->[$i]->[$j - 1];
-	    };
-	}
+	    $D->[$i]->[$j - 1] + $self->{gap_penalty};
+	};
     } else {
-	if (!$self->{local}) {
-	    $score_left = sub {
-		my ($i, $j) = @_;
+	$score_left = sub {
+	    my ($i, $j) = @_;
 
-		my $gp = (($A->[$i]->[$j - 1]) & $from_left) ?
-		    $self->{gap_extend_penalty} :
-		    $self->{gap_open_penalty};
-		$D->[$i]->[$j - 1] + $gp;
-	    };
-	} else {
-	    $score_left = sub {
-		my ($i, $j) = @_;
-
-		my $gp = 0;
-		if ($i < $m) {
-		    $gp = (($A->[$i]->[$j - 1]) & $from_left) ?
-		        $self->{gap_extend_penalty} :
-			$self->{gap_open_penalty};
-		}
-
-		$D->[$i]->[$j - 1] + $gp;
-	    };
-	}
+	    ($i < $m) ?
+		$D->[$i]->[$j - 1] + $self->{gap_penalty} :
+		$D->[$i]->[$j - 1];
+	};
     }
 
     # order must correspond to $from_* constants
@@ -206,19 +181,10 @@ sub align {
     }
 
     if (!$self->{local}) {
-        if (!exists($self->{gap_open_penalty})) {
-	    $j = 1;
-	    while ($j <= $n) {
-		$D->[0]->[$j] = $j * $self->{gap_penalty};
-		++$j;
-	    }
-	} else {
-	    $j = 1;
-	    while ($j <= $n) {
-		$D->[0]->[$j] = $self->{gap_open_penalty} +
-		    ($j - 1) * $self->{gap_extend_penalty};
-		++$j;
-	    }
+	$j = 1;
+	while ($j <= $n) {
+	    $D->[0]->[$j] = $j * $self->{gap_penalty};
+	    ++$j;
 	}
     } else {
         $j = 1;
@@ -234,24 +200,15 @@ sub align {
 	++$i;
     }
 
-    if (!exists($self->{gap_open_penalty})) {
-	my $i = 1;
-	while ($i <= $m) {
-	    $D->[$i]->[0] = $i * $self->{gap_penalty};
-	    ++$i;
-	}
-    } else {
-	my $i = 1;
-	while ($i <= $m) {
-	    $D->[$i]->[0] = $self->{gap_open_penalty} +
-	        ($i - 1) * $self->{gap_extend_penalty};
-	    ++$i;
-	}
+    $i = 1;
+    while ($i <= $m) {
+	$D->[$i]->[0] = $i * $self->{gap_penalty};
+	++$i;
     }
 
     $i = 1;
     while ($i <= $m) {
-        my $j = 1;
+	$j = 1;
 	while ($j <= $n) {
 	    my @scores = map { &$_($i, $j); } @subproblems;
 	    my $d = max(@scores);
@@ -317,26 +274,258 @@ sub align {
 	    --$j;
 	} elsif ($move eq 'shift_a') {
 	    --$j;
-
-	    if (exists($self->{gap_open_penalty})) {
-		if (($A->[$i]->[$j]) & $from_left) {
-		    $A->[$i]->[$j] = $from_left;
-		}
-	    }
 	} elsif ($move eq 'shift_b') {
 	    --$i;
-
-	    if (exists($self->{gap_open_penalty})) {
-		if (($A->[$i]->[$j]) & $from_up) {
-		    $A->[$i]->[$j] = $from_up;
-		}
-	    }
 	} else {
 	    die "internal error";
 	}
     }
 
     return $D->[$m]->[$n];
+}
+
+sub _align_affine {
+    my $self = shift;
+    my $a = shift;
+    my $b = shift;
+
+    my @D = ([ [ 0 ] ], [ [ 0 ] ], [ [ 0 ] ]); # indexed by $from_*_idx
+    my $m = scalar(@$b);
+    my $n = scalar(@$a);
+
+    my $score_diag = sub {
+        my ($i, $j) = @_;
+
+	my @base = map { $_->[$i - 1]->[$j - 1]; } @D;
+	my $base = max(@base);
+	$base + &{$self->{score_sub}}($a->[$j - 1], $b->[$i - 1]);
+    };
+
+    my $score_up = sub {
+	my ($i, $j) = @_;
+
+	my @base = map { $_->[$i - 1]->[$j]; } @D;
+	$base[$from_diag_idx] += $self->{gap_open_penalty};
+	$base[$from_up_idx] += $self->{gap_extend_penalty};
+	$base[$from_left_idx] += $self->{gap_open_penalty};
+	max(@base);
+    };
+
+    my $score_left;
+    if (!$self->{local}) {
+	$score_left = sub {
+	    my ($i, $j) = @_;
+
+	    my @base = map { $_->[$i]->[$j - 1]; } @D;
+	    $base[$from_diag_idx] += $self->{gap_open_penalty};
+	    $base[$from_up_idx] += $self->{gap_open_penalty};
+	    $base[$from_left_idx] += $self->{gap_extend_penalty};
+
+	    max(@base);
+	};
+    } else {
+	$score_left = sub {
+	    my ($i, $j) = @_;
+
+	    my @base = map { $_->[$i]->[$j - 1]; } @D;
+	    if ($i < $m) {
+		$base[$from_diag_idx] += $self->{gap_open_penalty};
+		$base[$from_up_idx] += $self->{gap_open_penalty};
+		$base[$from_left_idx] += $self->{gap_extend_penalty};
+	    }
+
+	    max(@base);
+	};
+    }
+
+    my $j;
+    if (!$self->{local}) {
+	$j = 1;
+	while ($j <= $n) {
+	    foreach (@D) {
+		$_->[0]->[$j] = $self->{gap_open_penalty} +
+		    ($j - 1) * $self->{gap_extend_penalty};
+	    }
+
+	    ++$j;
+	}
+    } else {
+	$j = 1;
+	while ($j <= $n) {
+	    foreach (@D) {
+		$_->[0]->[$j] = 0;
+	    }
+
+	    ++$j;
+	}
+    }
+
+    my $i = 1;
+    while ($i <= $m) {
+	foreach (@D) {
+	    $_->[$i]->[0] = $self->{gap_open_penalty} +
+		($i - 1) * $self->{gap_extend_penalty};
+	}
+
+	++$i;
+    }
+
+    # order must correspond to $from_* constants
+    my @subproblems = ( $score_diag, $score_up, $score_left );
+
+    $i = 1;
+    while ($i <= $m) {
+	$j = 1;
+	while ($j <= $n) {
+	    my $k = 0;
+	    while ($k < 3) { # scalar(@D), scalar(@subproblems)
+		$D[$k]->[$i]->[$j] = &{$subproblems[$k]}($i, $j);
+		++$k;
+	    }
+
+	    # my $x = join ', ', map { $_->[$i]->[$j]; } @D;
+	    # warn "$i, $j: $x\n";
+
+	    ++$j;
+	}
+
+	++$i;
+    }
+
+    # like $score_up
+    my @delta_up = ( $self->{gap_open_penalty}, $self->{gap_extend_penalty},
+		     $self->{gap_open_penalty} );
+
+    # like $score_left
+    my @delta_left = ( $self->{gap_open_penalty}, $self->{gap_open_penalty},
+		       $self->{gap_extend_penalty} );
+
+    my @no_delta = (0, 0, 0);
+
+    my @score = map { $_->[$m]->[$n]; } @D;
+    my $res = max(@score);
+
+    my $arrow = 0;
+    my $flag = 1;
+    my $idx = 0;
+    while ($idx < 3) { # scalar(@score)
+	if ($score[$idx] == $res) {
+	    $arrow |= $flag;
+	}
+
+	$flag *= 2;
+	++$idx;
+    }
+
+    $i = $m;
+    $j = $n;
+    while (($i > 0) || ($j > 0)) {
+	my @alt;
+	if ($arrow & $from_diag) {
+	    die "internal error" unless ($i > 0) && ($j > 0);
+	    push @alt, [ $i - 1, $j - 1 ];
+	}
+
+	if ($arrow & $from_up) {
+	    die "internal error" unless ($i > 0);
+	    push @alt, [ $i - 1, $j ];
+	}
+
+	if ($arrow & $from_left) {
+	    die "internal error" unless ($j > 0);
+	    push @alt, [ $i, $j - 1];
+	}
+
+	if (!@alt) {
+	    die "internal error";
+	}
+
+	# my $x = join ', ', map { "[ " . $_->[0] . ", " . $_->[1] . " ]"; } @alt;
+	# warn "$i, $j: $x\n";
+
+	my $cur = [ $i, $j ];
+	my $move;
+	if (@alt == 1) {
+	    $move = $self->_simple_trace_back($cur, $alt[0],
+					      $self->{callbacks});
+	} else {
+	    $move = $self->_trace_back($cur, \@alt);
+	}
+
+	if ($move eq 'align') {
+	    --$i;
+	    --$j;
+
+	    @score = map { $_->[$i]->[$j]; } @D;
+	    if ($i == 0) {
+		$arrow = $from_left;
+	    } elsif ($j == 0) {
+	        $arrow = $from_up;
+	    } else {
+		my $d = max(@score);
+		$arrow = 0;
+		$flag = 1;
+		$idx = 0;
+		while ($idx < 3) { # scalar(@score)
+		    if ($score[$idx] == $d) {
+			$arrow |= $flag;
+		    }
+
+		    $flag *= 2;
+		    ++$idx;
+		}
+	    }
+	} elsif ($move eq 'shift_a') {
+	    --$j;
+
+	    my @base = map { $_->[$i]->[$j] } @D;
+	    my $delta;
+	    if ($self->{local} && ($i == $m)) {
+		$delta = \@no_delta;
+	    } else {
+		$delta = \@delta_left;
+	    }
+
+	    $arrow = $self->_retread($score[$from_left_idx],  $i, $j,
+                \@base, $delta);
+	    @score = @base;
+	} elsif ($move eq 'shift_b') {
+	    --$i;
+
+	    my @base = map { $_->[$i]->[$j] } @D;
+	    $arrow = $self->_retread($score[$from_up_idx], $i, $j,
+		\@base, \@delta_up);
+	    @score = @base;
+	} else {
+	    die "internal error";
+	}
+    }
+
+    return $res;
+}
+
+sub _retread {
+    my ($self, $to_score, $i, $j, $base, $delta) = @_;
+
+    if ($i == 0) {
+	return $from_left;
+    } elsif ($j == 0) {
+	return $from_up;
+    }
+
+    my $a = 0;
+    my $flag = 1;
+    my $idx = 0;
+    while ($idx < 3) {
+	if ($base->[$idx] + $delta->[$idx] == $to_score) {
+	    $a |= $flag;
+	}
+
+	$flag *= 2;
+	++$idx;
+    }
+
+    return $a;
 }
 
 sub _trace_back {
@@ -436,7 +625,7 @@ Algorithm::NeedlemanWunsch - sequence alignment with configurable scoring
 
 =head1 VERSION
 
-Version 0.02
+Version 0.03
 
 =cut
 
@@ -624,8 +813,14 @@ optimal alignment, the C<Algorithm::NeedlemanWunsch> object prefers
 calling the specific callbacks, but will call C<select_align> if it's
 defined and the specific callback isn't.
 
-Note that the passed positions move backwards, from the sequence ends
-to zero - if you're building the alignment in your callbacks, add
+Note that C<select_align> is called I<instead> of the specific
+callbacks, not in addition to them - users defining both
+C<select_align> and other callbacks should probably call the specific
+callback explicitly from their C<select_align>, once it decides which
+one to prefer.
+
+Also note that the passed positions move backwards, from the sequence
+ends to zero - if you're building the alignment in your callbacks, add
 items to the front.
 
 =head2 Extensions
@@ -704,7 +899,7 @@ progress on your bug as I make changes.
 
 =head1 COPYRIGHT & LICENSE
 
-Copyright 2007 Vaclav Barta, all rights reserved.
+Copyright 2007-2013 Vaclav Barta, all rights reserved.
 
 This program is free software; you can redistribute it and/or modify it
 under the same terms as Perl itself.
